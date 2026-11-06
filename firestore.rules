@@ -1,0 +1,732 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function areUsersBlocked(firstUid, secondUid) {
+      return exists(
+          /databases/$(database)/documents/users/$(firstUid)/blocked/$(secondUid)
+        ) ||
+        exists(
+          /databases/$(database)/documents/users/$(secondUid)/blocked/$(firstUid)
+        );
+    }
+
+    function areUsersBlockedAfter(firstUid, secondUid) {
+      return existsAfter(
+          /databases/$(database)/documents/users/$(firstUid)/blocked/$(secondUid)
+        ) ||
+        existsAfter(
+          /databases/$(database)/documents/users/$(secondUid)/blocked/$(firstUid)
+        );
+    }
+
+    function usernameMatchesAfter(username, uid, profile) {
+      let usernameProfile = getAfter(
+        /databases/$(database)/documents/usernames/$(username)
+      ).data;
+      return usernameProfile.uid == uid &&
+        usernameProfile.username == username &&
+        usernameProfile.fullName == profile.fullName &&
+        usernameProfile.photoURL == profile.photoURL &&
+        usernameProfile.coverPhotoURL == profile.coverPhotoURL;
+    }
+
+    function isConversationParticipant(conversationId) {
+      let conversation = get(
+        /databases/$(database)/documents/conversations/$(conversationId)
+      ).data;
+      let otherUid = conversation.participantIds[0] == request.auth.uid
+        ? conversation.participantIds[1]
+        : conversation.participantIds[0];
+      return signedIn() &&
+        request.auth.uid in conversation.participantIds &&
+        !areUsersBlocked(request.auth.uid, otherUid);
+    }
+
+    function canRefreshOwnConversationProfile() {
+      let otherUid = resource.data.participantIds[0] == request.auth.uid
+        ? resource.data.participantIds[1]
+        : resource.data.participantIds[0];
+      let participant = request.resource.data.participants[request.auth.uid];
+      let profile = get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants']) &&
+        request.resource.data.participantIds == resource.data.participantIds &&
+        request.resource.data.participants[otherUid] == resource.data.participants[otherUid] &&
+        participant.keys().hasOnly([
+          'uid', 'username', 'fullName', 'photoURL', 'coverPhotoURL'
+        ]) &&
+        participant.uid == request.auth.uid &&
+        participant.username == profile.username &&
+        participant.fullName == profile.fullName &&
+        participant.photoURL == profile.photoURL &&
+        participant.coverPhotoURL == profile.coverPhotoURL;
+    }
+
+    function validPhoto(value, maxLength) {
+      return value is string &&
+        value.size() <= maxLength &&
+        (value == '' ||
+         value.matches('data:image/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+') ||
+         value.matches('https://[^ ]+'));
+    }
+
+    function validStoredAttachment(attachment) {
+      return attachment.keys().hasAll([
+          'name', 'contentType', 'size', 'storagePath', 'downloadURL'
+        ]) &&
+        attachment.keys().hasOnly([
+          'name', 'contentType', 'size', 'storagePath', 'downloadURL'
+        ]) &&
+        attachment.size is int &&
+        attachment.size <= 15 * 1024 * 1024 &&
+        attachment.name is string &&
+        attachment.contentType is string &&
+        attachment.contentType.matches(
+          '(application/pdf|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document|application/vnd.ms-excel|application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|application/vnd.ms-powerpoint|application/vnd.openxmlformats-officedocument.presentationml.presentation|text/plain|audio/(webm|ogg|mp4|mpeg|wav))'
+        ) &&
+        attachment.storagePath is string &&
+        attachment.downloadURL is string;
+    }
+
+    function validInlineImage(attachment) {
+      return attachment.keys().hasAll([
+          'name', 'contentType', 'size', 'dataUrl'
+        ]) &&
+        attachment.keys().hasOnly([
+          'name', 'contentType', 'size', 'dataUrl'
+        ]) &&
+        attachment.name is string &&
+        attachment.contentType is string &&
+        attachment.contentType.matches('image/(webp|jpeg|png)') &&
+        attachment.size is int &&
+        attachment.size <= 600 * 1024 &&
+        attachment.dataUrl is string &&
+        attachment.dataUrl.size() <= 850000 &&
+        attachment.dataUrl.matches(
+          'data:image/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+'
+        );
+    }
+
+    function validMessageImage(attachment) {
+        return validInlineImage(attachment) &&
+          attachment.size <= 150 * 1024 &&
+          attachment.dataUrl.size() <= 210000;
+    }
+
+    function validInlineImages(attachments) {
+        return attachments is list &&
+          attachments.size() >= 2 &&
+          attachments.size() <= 4 &&
+          validMessageImage(attachments[0]) &&
+          validMessageImage(attachments[1]) &&
+          (attachments.size() < 3 || validMessageImage(attachments[2])) &&
+          (attachments.size() < 4 || validMessageImage(attachments[3]));
+    }
+
+    function validPostImage(image) {
+      return image is map &&
+        image.keys().hasAll(['name', 'contentType', 'size', 'dataUrl']) &&
+        image.keys().hasOnly(['name', 'contentType', 'size', 'dataUrl']) &&
+        image.name is string &&
+        image.name.size() <= 255 &&
+        image.contentType.matches('image/(webp|jpeg|png)') &&
+        image.size is int &&
+        image.size > 0 &&
+        image.size <= 150 * 1024 &&
+        image.dataUrl is string &&
+        image.dataUrl.size() <= 210000 &&
+        image.dataUrl.matches('data:image/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+');
+    }
+
+    function validPostImages(images) {
+      return images is list &&
+        images.size() >= 1 &&
+        images.size() <= 4 &&
+        validPostImage(images[0]) &&
+        (images.size() < 2 || validPostImage(images[1])) &&
+        (images.size() < 3 || validPostImage(images[2])) &&
+        (images.size() < 4 || validPostImage(images[3]));
+    }
+
+    function validPostAuthor(data) {
+      let profile = get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+      return data.authorUid == request.auth.uid &&
+        data.authorName == profile.fullName &&
+        data.authorUsername == profile.username &&
+        data.authorPhotoURL == profile.photoURL;
+    }
+
+    function validStatusAuthor(data) {
+      let profile = get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+      return data.authorUid == request.auth.uid &&
+        data.authorName == profile.fullName &&
+        data.authorUsername == profile.username &&
+        data.authorPhotoURL == profile.photoURL;
+    }
+
+    function validStatusImage(image) {
+      return image is map &&
+        image.keys().hasAll(['name', 'contentType', 'size', 'dataUrl']) &&
+        image.keys().hasOnly(['name', 'contentType', 'size', 'dataUrl']) &&
+        image.name is string &&
+        image.name.size() <= 255 &&
+        image.contentType.matches('image/(webp|jpeg|png)') &&
+        image.size is int &&
+        image.size > 0 &&
+        image.size <= 150 * 1024 &&
+        image.dataUrl is string &&
+        image.dataUrl.size() <= 210000 &&
+        image.dataUrl.matches(
+          'data:image/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+'
+        );
+    }
+
+    function acceptedFriendRequest(requestId, firstUid, secondUid) {
+      let requestData = get(
+        /databases/$(database)/documents/friendRequests/$(requestId)
+      ).data;
+      return requestData.status == 'accepted' &&
+        ((requestData.fromUid == firstUid && requestData.toUid == secondUid) ||
+         (requestData.fromUid == secondUid && requestData.toUid == firstUid));
+    }
+
+    match /friendRequests/{requestId} {
+      allow get: if signedIn() &&
+        (requestId.matches('^' + request.auth.uid + '_.*$') ||
+         requestId.matches('^.*_' + request.auth.uid + '$'));
+      allow list: if signedIn() &&
+        (request.auth.uid == resource.data.fromUid ||
+         request.auth.uid == resource.data.toUid);
+      allow create: if signedIn() &&
+        requestId == request.auth.uid + '_' + request.resource.data.toUid &&
+        request.resource.data.keys().hasOnly([
+          'fromUid', 'toUid', 'fromUsername', 'toUsername',
+          'fromUser', 'toUser', 'status', 'createdAt'
+        ]) &&
+        request.resource.data.fromUid == request.auth.uid &&
+        request.resource.data.toUid is string &&
+        request.resource.data.toUid != request.auth.uid &&
+        !areUsersBlocked(request.auth.uid, request.resource.data.toUid) &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.fromUsername is string &&
+        request.resource.data.toUsername is string &&
+        get(
+          /databases/$(database)/documents/usernames/$(request.resource.data.fromUsername)
+        ).data.uid == request.auth.uid &&
+        get(
+          /databases/$(database)/documents/usernames/$(request.resource.data.toUsername)
+        ).data.uid == request.resource.data.toUid &&
+        request.resource.data.fromUser.uid == request.auth.uid &&
+        request.resource.data.fromUser.username == request.resource.data.fromUsername &&
+        request.resource.data.toUser.uid == request.resource.data.toUid &&
+        request.resource.data.toUser.username == request.resource.data.toUsername &&
+        validPhoto(request.resource.data.fromUser.photoURL, 320000) &&
+        validPhoto(request.resource.data.toUser.photoURL, 320000);
+      allow update: if signedIn() &&
+        ((resource.data.status == 'pending' &&
+          request.auth.uid == resource.data.toUid &&
+          !areUsersBlocked(resource.data.fromUid, resource.data.toUid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
+          request.resource.data.status in ['accepted', 'declined']) ||
+         (request.auth.uid == resource.data.fromUid &&
+          resource.data.status == 'declined' &&
+          !areUsersBlocked(resource.data.fromUid, resource.data.toUid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
+          request.resource.data.status == 'pending'));
+      allow delete: if signedIn() &&
+        ((request.auth.uid == resource.data.fromUid &&
+          resource.data.status == 'pending') ||
+         (request.auth.uid in [resource.data.fromUid, resource.data.toUid] &&
+          areUsersBlockedAfter(resource.data.fromUid, resource.data.toUid)));
+    }
+
+    match /usernames/{username} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'username', 'fullName', 'photoURL', 'coverPhotoURL'
+        ]) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.username == username &&
+        request.resource.data.fullName is string &&
+        request.resource.data.fullName.size() > 0 &&
+        request.resource.data.fullName.size() <= 100 &&
+        validPhoto(request.resource.data.photoURL, 320000) &&
+        validPhoto(request.resource.data.coverPhotoURL, 320000) &&
+        usernameMatchesAfter(
+          username,
+          request.auth.uid,
+          getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        );
+      allow update: if signedIn() &&
+        resource.data.uid == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'username', 'fullName', 'photoURL', 'coverPhotoURL'
+        ]) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.username == username &&
+        request.resource.data.fullName is string &&
+        request.resource.data.fullName.size() > 0 &&
+        request.resource.data.fullName.size() <= 100 &&
+        validPhoto(request.resource.data.photoURL, 320000) &&
+        validPhoto(request.resource.data.coverPhotoURL, 320000) &&
+        usernameMatchesAfter(
+          username,
+          request.auth.uid,
+          getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        );
+      allow delete: if signedIn() &&
+        resource.data.uid == request.auth.uid &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.username != username;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.keys().hasAll([
+          'username', 'email', 'fullName', 'birthDate', 'gender', 'photoURL',
+          'coverPhotoURL', 'updatedAt'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'username', 'email', 'fullName', 'birthDate', 'gender', 'photoURL',
+          'coverPhotoURL', 'updatedAt'
+        ]) &&
+        request.resource.data.username is string &&
+        request.resource.data.username.matches('[a-z0-9_]{3,20}') &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.fullName is string &&
+        request.resource.data.fullName.size() > 0 &&
+        request.resource.data.fullName.size() <= 100 &&
+        request.resource.data.birthDate is string &&
+        request.resource.data.gender is string &&
+        validPhoto(request.resource.data.photoURL, 320000) &&
+        validPhoto(request.resource.data.coverPhotoURL, 320000) &&
+        request.resource.data.updatedAt == request.time &&
+        usernameMatchesAfter(request.resource.data.username, uid, request.resource.data);
+      allow update: if signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.username.matches('[a-z0-9_]{3,20}') &&
+        request.resource.data.email == request.auth.token.email &&
+        validPhoto(request.resource.data.photoURL, 320000) &&
+        validPhoto(request.resource.data.coverPhotoURL, 320000) &&
+        usernameMatchesAfter(request.resource.data.username, uid, request.resource.data) &&
+        request.resource.data.keys().hasOnly([
+          'username', 'email', 'fullName', 'birthDate', 'gender', 'photoURL',
+          'coverPhotoURL', 'updatedAt'
+        ]) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['username', 'fullName', 'birthDate', 'gender', 'photoURL', 'coverPhotoURL', 'updatedAt']) &&
+        request.resource.data.updatedAt == request.time;
+
+      match /friends/{friendUid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() &&
+          request.auth.uid in [uid, friendUid] &&
+          !areUsersBlocked(uid, friendUid) &&
+          request.resource.data.uid == friendUid &&
+          request.resource.data.requestId is string &&
+          acceptedFriendRequest(request.resource.data.requestId, uid, friendUid) &&
+          request.resource.data.username is string &&
+          request.resource.data.fullName is string &&
+          validPhoto(request.resource.data.photoURL, 320000) &&
+          (request.method == 'create' ||
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['requestId', 'username', 'fullName', 'photoURL', 'coverPhotoURL', 'createdAt']));
+        allow delete: if signedIn() &&
+          request.auth.uid in [uid, friendUid] &&
+          areUsersBlockedAfter(uid, friendUid);
+      }
+
+      match /blocked/{blockedUid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create: if signedIn() &&
+          request.auth.uid == uid &&
+          blockedUid != uid &&
+          request.resource.data.keys().hasOnly([
+            'uid', 'username', 'fullName', 'photoURL', 'createdAt'
+          ]) &&
+          request.resource.data.uid == blockedUid &&
+          request.resource.data.username is string &&
+          get(
+            /databases/$(database)/documents/usernames/$(request.resource.data.username)
+          ).data.uid == blockedUid &&
+          request.resource.data.fullName ==
+            get(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.fullName &&
+          request.resource.data.photoURL ==
+            get(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.photoURL &&
+          request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          request.auth.uid == uid &&
+          !existsAfter(
+            /databases/$(database)/documents/users/$(blockedUid)/blockedBy/$(uid)
+          );
+      }
+
+      match /blockedBy/{blockerUid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create: if signedIn() &&
+          request.auth.uid == blockerUid &&
+          request.resource.data.keys().hasOnly([
+            'uid', 'username', 'fullName', 'photoURL', 'createdAt'
+          ]) &&
+          request.resource.data.uid == blockerUid &&
+          existsAfter(
+            /databases/$(database)/documents/users/$(blockerUid)/blocked/$(uid)
+          ) &&
+          request.resource.data.username ==
+            get(/databases/$(database)/documents/users/$(blockerUid)).data.username &&
+          request.resource.data.fullName ==
+            get(/databases/$(database)/documents/users/$(blockerUid)).data.fullName &&
+          request.resource.data.photoURL ==
+            get(/databases/$(database)/documents/users/$(blockerUid)).data.photoURL &&
+          request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          request.auth.uid == blockerUid &&
+          !existsAfter(
+            /databases/$(database)/documents/users/$(blockerUid)/blocked/$(uid)
+          );
+      }
+
+      match /presence/{statusId} {
+        allow read: if signedIn() &&
+          (request.auth.uid == uid ||
+           (exists(/databases/$(database)/documents/users/$(uid)/friends/$(request.auth.uid)) &&
+            !areUsersBlocked(uid, request.auth.uid)));
+        allow create, update: if signedIn() &&
+          request.auth.uid == uid &&
+          statusId == 'status' &&
+          request.resource.data.keys().hasOnly(['isOnline', 'lastSeen']) &&
+          request.resource.data.isOnline is bool &&
+          request.resource.data.lastSeen == request.time;
+        allow delete: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create: if signedIn() &&
+          request.resource.data.keys().hasOnly([
+            'type', 'conversationId', 'messageId', 'senderUid', 'senderName',
+            'senderUsername', 'senderPhotoURL', 'preview', 'createdAt', 'read'
+          ]) &&
+          request.resource.data.type == 'message' &&
+          request.resource.data.conversationId is string &&
+          request.resource.data.messageId == notificationId &&
+          request.resource.data.senderUid == request.auth.uid &&
+          request.resource.data.senderName is string &&
+          request.resource.data.senderName.size() <= 100 &&
+          request.resource.data.senderUsername is string &&
+          validPhoto(request.resource.data.senderPhotoURL, 320000) &&
+          request.resource.data.preview is string &&
+          request.resource.data.preview.size() <= 5000 &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.read == false &&
+          request.auth.uid in get(
+            /databases/$(database)/documents/conversations/$(request.resource.data.conversationId)
+          ).data.participantIds &&
+          uid in get(
+            /databases/$(database)/documents/conversations/$(request.resource.data.conversationId)
+          ).data.participantIds &&
+          request.auth.uid != uid &&
+          getAfter(
+            /databases/$(database)/documents/conversations/$(request.resource.data.conversationId)/messages/$(notificationId)
+          ).data.senderId == request.auth.uid;
+        allow update: if signedIn() &&
+          request.auth.uid == uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']) &&
+          request.resource.data.read == true &&
+          request.resource.data.readAt == request.time;
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+    }
+
+    match /conversations/{conversationId} {
+      allow get: if signedIn() &&
+        (!exists(/databases/$(database)/documents/conversations/$(conversationId)) ||
+         request.auth.uid in resource.data.participantIds);
+      allow list: if signedIn() && request.auth.uid in resource.data.participantIds;
+      allow create: if signedIn() &&
+        request.resource.data.participantIds is list &&
+        request.resource.data.participantIds.size() == 2 &&
+        request.resource.data.participantIds[0] < request.resource.data.participantIds[1] &&
+        conversationId == request.resource.data.participantIds[0] + '_' +
+          request.resource.data.participantIds[1] &&
+        request.auth.uid in request.resource.data.participantIds &&
+        !areUsersBlocked(
+          request.resource.data.participantIds[0],
+          request.resource.data.participantIds[1]
+        ) &&
+        request.resource.data.friendRequestId is string &&
+        acceptedFriendRequest(
+          request.resource.data.friendRequestId,
+          request.resource.data.participantIds[0],
+          request.resource.data.participantIds[1]
+        ) &&
+        request.resource.data.lastMessage == '' &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+      allow update: if signedIn() &&
+        request.auth.uid in resource.data.participantIds &&
+        !areUsersBlocked(
+          resource.data.participantIds[0],
+          resource.data.participantIds[1]
+        ) &&
+        request.resource.data.participantIds == resource.data.participantIds &&
+        ((
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['lastMessage', 'updatedAt']) &&
+          request.resource.data.lastMessage is string &&
+          request.resource.data.lastMessage.size() > 0 &&
+          request.resource.data.lastMessage.size() <= 5000 &&
+          request.resource.data.updatedAt == request.time
+        ) || canRefreshOwnConversationProfile());
+
+      match /messages/{messageId} {
+        allow read: if isConversationParticipant(conversationId);
+        allow create: if isConversationParticipant(conversationId) &&
+          request.resource.data.senderId == request.auth.uid &&
+          request.resource.data.keys().hasAll(['senderId', 'text', 'readBy', 'createdAt']) &&
+          request.resource.data.keys().hasOnly([
+            'senderId', 'text', 'readBy', 'createdAt', 'attachment', 'attachments'
+          ]) &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() <= 5000 &&
+          (request.resource.data.text.size() > 0 ||
+           'attachment' in request.resource.data ||
+           'attachments' in request.resource.data) &&
+          !('attachment' in request.resource.data &&
+            'attachments' in request.resource.data) &&
+          request.resource.data.readBy == [request.auth.uid] &&
+          request.resource.data.createdAt == request.time &&
+          (!('attachment' in request.resource.data) ||
+           (request.resource.data.attachment is map &&
+            (validInlineImage(request.resource.data.attachment) ||
+             validStoredAttachment(request.resource.data.attachment)))) &&
+          (!('attachments' in request.resource.data) ||
+           validInlineImages(request.resource.data.attachments));
+        allow update: if isConversationParticipant(conversationId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']) &&
+          request.auth.uid != resource.data.senderId &&
+          request.auth.uid in request.resource.data.readBy &&
+          resource.data.senderId in request.resource.data.readBy &&
+          request.resource.data.readBy.size() <= 2;
+        allow delete: if false;
+      }
+
+      match /typing/{uid} {
+        allow read: if isConversationParticipant(conversationId);
+        allow create, update: if isConversationParticipant(conversationId) &&
+          request.auth.uid == uid &&
+          request.resource.data.keys().hasOnly(['isTyping', 'updatedAt']) &&
+          request.resource.data.isTyping is bool &&
+          request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+    }
+
+    match /posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly([
+          'authorUid', 'authorName', 'authorUsername', 'authorPhotoURL',
+          'caption', 'images', 'createdAt'
+        ]) &&
+        validPostAuthor(request.resource.data) &&
+        request.resource.data.authorName is string &&
+        request.resource.data.authorName.size() <= 100 &&
+        request.resource.data.authorUsername is string &&
+        request.resource.data.authorUsername.matches('[a-z0-9_]{3,20}') &&
+        validPhoto(request.resource.data.authorPhotoURL, 320000) &&
+        request.resource.data.caption is string &&
+        request.resource.data.caption.size() <= 2000 &&
+        validPostImages(request.resource.data.images) &&
+        request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if signedIn() && request.auth.uid == resource.data.authorUid;
+
+      match /likes/{uid} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          request.auth.uid == uid &&
+          !areUsersBlocked(
+            get(/databases/$(database)/documents/posts/$(postId)).data.authorUid,
+            request.auth.uid
+          ) &&
+          request.resource.data.keys().hasOnly(['createdAt']) &&
+          request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          (request.auth.uid == uid ||
+           request.auth.uid ==
+             get(/databases/$(database)/documents/posts/$(postId)).data.authorUid);
+      }
+
+      match /comments/{commentId} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          !areUsersBlocked(
+            get(/databases/$(database)/documents/posts/$(postId)).data.authorUid,
+            request.auth.uid
+          ) &&
+          request.resource.data.keys().hasOnly([
+            'authorUid', 'authorName', 'authorUsername', 'authorPhotoURL',
+            'text', 'parentCommentId', 'createdAt'
+          ]) &&
+          validPostAuthor(request.resource.data) &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 1000 &&
+          request.resource.data.parentCommentId is string &&
+          (request.resource.data.parentCommentId == '' ||
+           (exists(
+             /databases/$(database)/documents/posts/$(postId)/comments/$(request.resource.data.parentCommentId)
+           ) &&
+            get(
+              /databases/$(database)/documents/posts/$(postId)/comments/$(request.resource.data.parentCommentId)
+            ).data.parentCommentId == '')) &&
+          request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          (request.auth.uid == resource.data.authorUid ||
+           request.auth.uid ==
+             get(/databases/$(database)/documents/posts/$(postId)).data.authorUid);
+      }
+    }
+
+    match /statuses/{statusId} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly([
+          'authorUid', 'authorName', 'authorUsername', 'authorPhotoURL',
+          'caption', 'image', 'createdAt', 'expiresAt'
+        ]) &&
+        validStatusAuthor(request.resource.data) &&
+        request.resource.data.authorName is string &&
+        request.resource.data.authorName.size() <= 100 &&
+        request.resource.data.authorUsername is string &&
+        request.resource.data.authorUsername.matches('[a-z0-9_]{3,20}') &&
+        validPhoto(request.resource.data.authorPhotoURL, 320000) &&
+        request.resource.data.caption is string &&
+        request.resource.data.caption.size() <= 500 &&
+        validStatusImage(request.resource.data.image) &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.expiresAt is timestamp &&
+        request.resource.data.expiresAt > request.time - duration.value(5, 'm') &&
+        request.resource.data.expiresAt <= request.time + duration.value(25, 'h');
+      allow update: if false;
+      allow delete: if signedIn() && request.auth.uid == resource.data.authorUid;
+
+      match /likes/{uid} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          request.auth.uid == uid &&
+          !areUsersBlocked(
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid,
+            request.auth.uid
+          ) &&
+          request.resource.data.keys().hasOnly(['createdAt']) &&
+          request.resource.data.createdAt == request.time &&
+          get(/databases/$(database)/documents/statuses/$(statusId)).data.expiresAt > request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          (request.auth.uid == uid ||
+           request.auth.uid ==
+             get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid);
+      }
+
+      match /views/{uid} {
+        allow read: if signedIn() &&
+          request.auth.uid ==
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid;
+        allow create, update: if signedIn() &&
+          request.auth.uid == uid &&
+          !areUsersBlocked(
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid,
+            request.auth.uid
+          ) &&
+          request.resource.data.keys().hasOnly([
+            'viewerUid', 'viewerName', 'viewerUsername', 'viewedAt'
+          ]) &&
+          request.resource.data.viewerUid == uid &&
+          request.resource.data.viewerName ==
+            get(/databases/$(database)/documents/users/$(uid)).data.fullName &&
+          request.resource.data.viewerUsername ==
+            get(/databases/$(database)/documents/users/$(uid)).data.username &&
+          request.resource.data.viewedAt == request.time &&
+          get(/databases/$(database)/documents/statuses/$(statusId)).data.expiresAt > request.time;
+        allow delete: if signedIn() &&
+          request.auth.uid ==
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid;
+      }
+
+      match /shares/{uid} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          request.auth.uid == uid &&
+          !areUsersBlocked(
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid,
+            request.auth.uid
+          ) &&
+          request.resource.data.keys().hasOnly(['userUid', 'userName', 'createdAt']) &&
+          request.resource.data.userUid == uid &&
+          request.resource.data.userName ==
+            get(/databases/$(database)/documents/users/$(uid)).data.fullName &&
+          request.resource.data.createdAt == request.time &&
+          get(/databases/$(database)/documents/statuses/$(statusId)).data.expiresAt > request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          (request.auth.uid == uid ||
+           request.auth.uid ==
+             get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid);
+      }
+
+      match /responses/{responseId} {
+        allow read: if signedIn() &&
+          (request.auth.uid == resource.data.ownerUid ||
+           request.auth.uid == resource.data.authorUid);
+        allow create: if signedIn() &&
+          !areUsersBlocked(
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid,
+            request.auth.uid
+          ) &&
+          request.resource.data.keys().hasOnly([
+            'authorUid', 'authorName', 'authorUsername', 'ownerUid', 'text', 'createdAt'
+          ]) &&
+          request.resource.data.authorUid == request.auth.uid &&
+          request.resource.data.ownerUid ==
+            get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid &&
+          request.resource.data.authorUid != request.resource.data.ownerUid &&
+          request.resource.data.authorName ==
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullName &&
+          request.resource.data.authorUsername ==
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 500 &&
+          request.resource.data.createdAt == request.time &&
+          get(/databases/$(database)/documents/statuses/$(statusId)).data.expiresAt > request.time;
+        allow update: if false;
+        allow delete: if signedIn() &&
+          (request.auth.uid == resource.data.authorUid ||
+           request.auth.uid ==
+             get(/databases/$(database)/documents/statuses/$(statusId)).data.authorUid);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
