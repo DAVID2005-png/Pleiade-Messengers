@@ -269,7 +269,9 @@ export default function Statuses({ user, profile, blockedUserIds = [] }) {
   return <div className="statuses-page">
     <header className="statuses-heading">
       <div><h1>Statuts</h1><p>Photos visibles par les membres connectés pendant 24 heures.</p></div>
-      <button className="status-create-button" onClick={() => setShowComposer(true)}><Plus size={18} />Nouveau</button>
+      <button className="status-create-button" onClick={() => setShowComposer(true)}>
+        <Plus size={18} /><span className="status-create-desktop-label">Nouveau</span><span className="status-create-mobile-label">Ajouter</span>
+      </button>
     </header>
     <Toast message={error} onClose={dismissError} />
     <Toast message={notice} type="success" onClose={dismissNotice} />

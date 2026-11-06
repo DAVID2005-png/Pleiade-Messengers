@@ -786,15 +786,15 @@ export default function Messenger({ user, profile, profileError, onProfileChange
   }
 
   const nav = [
-    { id: 'chats', label: 'Conversations', icon: MessageCircle },
+    { id: 'chats', label: 'Conversations', mobileLabel: 'Chats', icon: MessageCircle },
     { id: 'friends', label: 'Amis', icon: Users },
     { id: 'statuses', label: 'Statuts', icon: CircleDashed },
-    { id: 'posts', label: 'Publications', icon: Newspaper },
-    { id: 'settings', label: 'Paramètres', icon: Settings }
+    { id: 'posts', label: 'Publications', mobileLabel: 'Posts', icon: Newspaper },
+    { id: 'settings', label: 'Paramètres', mobileLabel: 'Réglages', icon: Settings }
   ]
 
   return <div className="app-shell">
-    <aside className={`sidebar ${selected ? 'mobile-hidden' : ''}`}>
+    <aside className={`sidebar ${selected || tab === 'statuses' || tab === 'posts' ? 'mobile-hidden' : ''}`}>
       <header className="side-header">
         <div className="brand"><img src="/logo.png" alt="" /><div><b>PLEIADE</b><small>MESSENGERS</small></div></div>
         <button className="icon-button notification-toggle" onClick={() => setShowNotifications(value => !value)} aria-label="Notifications">
@@ -937,7 +937,7 @@ export default function Messenger({ user, profile, profileError, onProfileChange
       </div>
       <footer className="side-user"><Avatar person={profile} small onPhotoClick={openProfilePhoto} /><span>{name}</span><button onClick={onLogout} title="Déconnexion"><LogOut size={17} /></button></footer>
     </aside>
-    <main className={`chat-panel ${selected ? 'mobile-visible' : ''}`}>
+    <main className={`chat-panel ${selected || tab === 'statuses' || tab === 'posts' ? 'mobile-visible' : ''}`}>
       {tab === 'statuses' && !activeConversation ? <Statuses user={user} profile={profile} blockedUserIds={blockedUidList} />
         : tab === 'posts' && !activeConversation ? <Posts user={user} profile={profile} blockedUserIds={blockedUidList} />
         : activeConversation ? <>
@@ -993,6 +993,18 @@ export default function Messenger({ user, profile, profileError, onProfileChange
         </form>
       </> : <div className="welcome"><div className="welcome-mark"><MessageCircle /></div><h2>Bienvenue sur Pleiade Messengers</h2><p>Une messagerie simple, privée et facile à utiliser.</p><span>Sélectionnez une conversation ou ajoutez un ami.</span></div>}
     </main>
+    <nav className={`mobile-tab-bar${selected ? ' conversation-open' : ''}`} aria-label="Navigation principale">
+      {nav.map(item => <button
+        key={item.id}
+        type="button"
+        className={tab === item.id ? 'active' : ''}
+        aria-current={tab === item.id ? 'page' : undefined}
+        onClick={() => { setTab(item.id); setSelected(null) }}
+      >
+        <item.icon size={20} />
+        <span>{item.mobileLabel || item.label}</span>
+      </button>)}
+    </nav>
 
     {showAdd && <div className="modal-backdrop" onClick={() => setShowAdd(false)}>
       <section className="modal friend-search-modal" onClick={event => event.stopPropagation()}>

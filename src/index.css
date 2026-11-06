@@ -55,6 +55,43 @@ input:focus,select:focus{border-color:#1555d9;box-shadow:0 0 0 3px #1555d91a}
 .online-dot.offline{display:none}
 .chat-header .online-dot{width:12px;height:12px}
 .message-date{position:sticky;top:0;z-index:1;align-self:center;text-align:center;margin:3px 0 7px}
+
+.status-create-mobile-label{display:none}
+.mobile-tab-bar{display:none}
+@media(max-width:700px){
+  .app-shell{position:relative;min-height:100dvh}
+  .sidebar{flex:none;padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  .sidebar .side-nav{display:none}
+  .mobile-tab-bar{position:absolute;inset:auto 0 0;z-index:25;display:flex;align-items:stretch;justify-content:space-around;min-height:calc(66px + env(safe-area-inset-bottom));padding:6px 4px calc(6px + env(safe-area-inset-bottom));border-top:1px solid #e8ecf5;background:#fff}
+  .mobile-tab-bar button{display:flex;min-width:0;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:4px 1px;border:0;border-radius:10px;background:transparent;color:#77819a;font-size:10px;line-height:1.2}
+  .mobile-tab-bar button.active{background:#edf3ff;color:#1555d9;font-weight:700}
+  .mobile-tab-bar button span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mobile-tab-bar.conversation-open{display:none}
+  .chat-panel.mobile-visible{flex:1;min-width:0;min-height:0;width:100%;padding-bottom:0}
+  .posts-feed,.statuses-page{width:100%;padding:12px 12px calc(88px + env(safe-area-inset-bottom))}
+  .posts-heading{margin-bottom:12px}
+  .posts-heading h1,.statuses-heading h1{font-size:21px}
+  .posts-heading p,.statuses-heading p{margin-top:4px;font-size:11px}
+  .post-composer,.post-card{width:100%;margin-bottom:10px}
+  .posts-empty,.statuses-empty{min-height:132px}
+  .statuses-heading{align-items:center;gap:12px;margin-bottom:12px}
+  .status-create-button{min-height:44px;flex:none;padding:0 13px}
+  .status-create-desktop-label{display:none}
+  .status-create-mobile-label{display:inline}
+  .status-carousel{gap:6px;padding:4px 0 12px;scroll-snap-type:x proximity}
+  .status-group-card{scroll-snap-align:start}
+  .status-group-card.add-status-card{min-height:104px;border:1px solid #e8ecf5;border-radius:14px;background:#fff}
+  .status-group-card.add-status-card:hover{background:#f7f9fd}
+  .status-own-avatar>i{width:24px;height:24px}
+  .post-composer{margin-bottom:14px}
+  .post-composer-heading{min-height:44px}
+  .post-composer textarea{min-height:72px;margin-top:10px}
+  .post-composer-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+  .post-photo-pick{grid-column:1/-1;width:100%;min-height:48px;justify-content:center;margin:0;padding:12px;border:1px solid #dce7ff;border-radius:10px;background:#edf3ff;font-size:13px;font-weight:700}
+  .post-composer-footer>span{margin:0}
+  .post-publish{min-height:46px;padding:0 18px;font-size:13px}
+  .status-photo-pick{width:100%;min-height:48px;justify-content:center;margin:8px 0 14px;font-size:13px;font-weight:700}
+}
 .message-date span{display:inline-block;padding:6px 12px;border-radius:14px;background:#eaf0fb;color:#65728c;font-size:11px}
 .message-row.own .message-bubble{background:#e8f0ff;color:#101c4b}
 .message-bubble small{display:flex;justify-content:flex-end;align-items:center;gap:6px}
